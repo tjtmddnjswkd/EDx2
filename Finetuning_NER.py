@@ -157,7 +157,6 @@ if args['pretrained_model_path'] != None:
     stat_dict = t.load(args['pretrained_model_path'], map_location='cpu')
     for key in list(stat_dict.keys()):
         stat_dict[key.replace('gamma', 'weight').replace('beta', 'bias')] = stat_dict.pop(key)
-    # import pdb;pdb.set_trace()
     model.load_state_dict(stat_dict, strict=False)
 
 sta_name_pos = 0
@@ -330,10 +329,6 @@ except KeyboardInterrupt:
     with open(args['save_path']+'/kbstop_loss.pkl','wb') as f:
         pickle.dump([train_los_table,val_los_table,args],f)
     t.save(model.state_dict(), args['save_path']+'/kbstop_stat_dict')
-
-# if os.path.exists(args['save_path']+'/Best_stat_dic_'+args['strategy']):
-#     file_name = args['save_path']+'/Best_stat_dic_'+args['strategy']
-# else: file_name = args['save_path']+'/stat_dic_'+args['strategy']+'_14'
 
 # eval by test
 test_logger = Logger(args['save_path'] + '/test.log')
