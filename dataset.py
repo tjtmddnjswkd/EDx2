@@ -6,16 +6,15 @@ import glob
 from tqdm import tqdm
 
 class Pretrain_and_Distill_Dataset(Dataset):
-    def __init__(self, data_path, tokenizer, is_train):
+    def __init__(self, data_path, tokenizer, mode, is_train):
         super(Pretrain_and_Distill_Dataset, self).__init__()
         self.tokenizer = tokenizer
         self.mask_id = self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize('[MASK]'))[0]
         self.sep_id = self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize('[SEP]'))[0]
         self.Train_Data, self.Train_Label, self.Val_Data, self.Val_Label = self.load_data(data_path)
         self.is_train = is_train
-        # if self.is_train:
-        #     self.INPUT = self.prepare_data(self.Train_Data, self.Train_Label)
-        # else: self.INPUT = self.prepare_data(self.Val_Data, self.Val_Label)
+        self.mode = mode
+
     def load_data(self, data_path, val_p = 1000):
         Train_Data = []
         Val_Data = []
@@ -57,7 +56,8 @@ class Pretrain_and_Distill_Dataset(Dataset):
             Token_type_ids[:] = 0
         Attention_mask[0:sentence_length] = 1
         Next_sentence_label = Train_Label
-        Input_ids, Masked_lm_labels = self.tokenizer.Masking(Input_ids, Masked_lm_labels)
+        if self.mode == 'PT' or self.mode == 'ALL':
+            Input_ids, Masked_lm_labels = self.tokenizer.Masking(Input_ids, Masked_lm_labels)
         return (Input_ids, Token_type_ids, Attention_mask, Masked_lm_labels, Next_sentence_label)
     
     def __len__(self):
