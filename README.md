@@ -2,14 +2,15 @@ Efficient Domain Extension Distillation(EDx2)
 
 1. Pretraining
 
+### case 1
 In command line:
 
-    python Pretraining.py 
+    CUDA_VISIBLE_DEVICES=0,1 python Pretraining.py 
       -m PT
       -e 3 
       -b 256 
       -sp (path dir to save outputs)
-      -dv (gpu devices to use) -lr 1e-04 
+      -lr 1e-04 
       -str exBERT
       -config (path to config file of original BERT) (path to config file of extension module)  
       -vocab ./config_and_vocab/exBERT/exBERT_vocab.txt 
