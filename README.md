@@ -50,7 +50,7 @@ In command line:
       -lr 1e-04 
       -str exBERT
       -config (path to config file of teacher model)
-      -config_s (path to config file of TinyBERT) (path to config file of tiny extension module)  
+      -config_s (path to config file of student model) 
       -vocab (path to vocab file) 
       -pm_p (path to state dict of pretrained teacher model)
       -dp (path to your training data)
