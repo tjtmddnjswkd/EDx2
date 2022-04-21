@@ -338,7 +338,7 @@ class BertSelfAttention(nn.Module):
         context_layer = context_layer.view(*new_context_layer_shape)
         
 
-        return context_layer   #  1, N, 768
+        return context_layer, attention_scores  #  1, N, 768
 
 
 class BertSelfOutput(nn.Module):
@@ -362,9 +362,9 @@ class BertAttention(nn.Module):
         self.output = BertSelfOutput(config, config_1)
 
     def forward(self, input_tensor, attention_mask):
-        self_output = self.self(input_tensor, attention_mask)
+        self_output, layer_att = self.self(input_tensor, attention_mask)
         attention_output = self.output(self_output, input_tensor)
-        return attention_output
+        return attention_output, layer_att
 
 
 class BertIntermediate(nn.Module):
@@ -411,7 +411,7 @@ class BertOutput(nn.Module):
 #         return layer_output
 
 class BertLayer(nn.Module):
-    def __init__(self, config,config_1):
+    def __init__(self, config, config_1):
         super(BertLayer, self).__init__()
         self.attention = BertAttention(config, config)
         self.intermediate = BertIntermediate(config, config)
@@ -423,42 +423,45 @@ class BertLayer(nn.Module):
                 self.output_ADD = BertOutput(config, config_1)
                 self.gate_ADD = nn.Linear(config.hidden_size,1)
 
-
     def forward(self, hidden_states, attention_mask):
         if hasattr(self, 'gate_ADD'):
             gated_value_layer =  torch.sigmoid(self.gate_ADD(hidden_states))
-            attention_output = self.attention(hidden_states, attention_mask)
+            attention_output, layer_att = self.attention(hidden_states, attention_mask)
             intermediate_output = self.intermediate(attention_output)
             layer_output = self.output(intermediate_output, attention_output)
-            attention_output_ADD = self.attention_ADD(hidden_states, attention_mask)
+            attention_output_ADD, layer_att_ADD = self.attention_ADD(hidden_states, attention_mask)
             intermediate_output_ADD = self.intermediate_ADD(attention_output_ADD)
             layer_output_ADD = self.output_ADD(intermediate_output_ADD, attention_output_ADD)
             Layer_output = gated_value_layer*layer_output +(1-gated_value_layer)*layer_output_ADD
+            Layer_att = torch.cat((layer_att, layer_att_ADD), axis=1)
+            return Layer_output, Layer_att
         else:
-            attention_output = self.attention(hidden_states, attention_mask)
+            attention_output, layer_att = self.attention(hidden_states, attention_mask)
             intermediate_output = self.intermediate(attention_output)
             Layer_output = self.output(intermediate_output, attention_output)
-        return Layer_output 
-
-
-
+            return Layer_output, layer_att
 
 
 class BertEncoder(nn.Module):
     def __init__(self, config, config_1):
         super(BertEncoder, self).__init__()
-        layer = BertLayer(config,config_1)
+        layer = BertLayer(config, config_1)
         self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(config.num_hidden_layers)])
 
     def forward(self, hidden_states, attention_mask, output_all_encoded_layers=True):
         all_encoder_layers = []
+        all_encoder_atts = []
         for layer_module in self.layer:
-            hidden_states = layer_module(hidden_states, attention_mask)
+            hidden_states, layer_att = layer_module(hidden_states, attention_mask)
             if output_all_encoded_layers:
                 all_encoder_layers.append(hidden_states)
+                all_encoder_atts.append(layer_att)
+        
         if not output_all_encoded_layers:
             all_encoder_layers.append(hidden_states)
-        return all_encoder_layers
+            all_encoder_atts.append(layer_att)
+        
+        return all_encoder_layers, all_encoder_atts
 
 
 class BertPooler(nn.Module):
@@ -737,7 +740,7 @@ class BertModel(BertPreTrainedModel):
         self.pooler = BertPooler(config)
         self.apply(self.init_bert_weights)
 
-    def forward(self, input_ids, token_type_ids=None, attention_mask=None, output_all_encoded_layers=True):
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, output_all_encoded_layers=True, output_att=True, mode=None):
         if attention_mask is None:
             attention_mask = torch.ones_like(input_ids)
         if token_type_ids is None:
@@ -761,20 +764,23 @@ class BertModel(BertPreTrainedModel):
 
         embedding_output = self.embeddings(input_ids, token_type_ids)
 
-
-        encoded_layers = self.encoder(embedding_output,
-                                      extended_attention_mask,
-                                      output_all_encoded_layers=output_all_encoded_layers)
+        encoded_layers, layer_atts = self.encoder(embedding_output,
+                                    extended_attention_mask,
+                                    output_all_encoded_layers=output_all_encoded_layers)
+        
         sequence_output = encoded_layers[-1]
         pooled_output = self.pooler(sequence_output)
         if not output_all_encoded_layers:
             encoded_layers = encoded_layers[-1]
-        
-        return encoded_layers, pooled_output
+        if not output_att:
+            return encoded_layers, pooled_output
+        if mode == 'DT':
+            return encoded_layers, layer_atts
+        return encoded_layers, layer_atts, pooled_output, 
 
-class TinyBertForPreTraining(BertPreTrainedModel):
+class TinyBertForDistillation(BertPreTrainedModel):
     def __init__(self, config, config_1=None, fit_size=768):
-        super(TinyBertForPreTraining, self).__init__(config)
+        super(TinyBertForDistillation, self).__init__(config)
         self.bert = BertModel(config, config_1)
         self.fit_dense = nn.Linear(config.hidden_size, fit_size)
         self.apply(self.init_bert_weights)
@@ -789,7 +795,7 @@ class TinyBertForPreTraining(BertPreTrainedModel):
             tmp.append(self.fit_dense(sequence_layer))
         sequence_output = tmp
 
-        return att_output, sequence_output
+        return sequence_output, att_output
 
 class TinyBertForPreTrainingWithDistillation(BertPreTrainedModel):
     def __init__(self, config, config_1=None, fit_size=768):
@@ -806,20 +812,20 @@ class TinyBertForPreTrainingWithDistillation(BertPreTrainedModel):
         else:
             self.cls = BertPreTrainingHeads(config, self.bert.embeddings.word_embeddings.weight)
             self.vocab_size = config.vocab_size
-        # self.fit_dense = nn.Linear(config.hidden_size, fit_size)
+        
+        self.fit_dense = nn.Linear(config.hidden_size, fit_size)
         self.apply(self.init_bert_weights)
         
     def forward(self, input_ids, token_type_ids=None, attention_mask=None, \
                 masked_lm_labels=None, next_sentence_label=None):
         sequence_output, att_scores, pooled_output = self.bert(input_ids, token_type_ids, attention_mask,
-                                                    output_all_encoded_layers=False)
-        
-        # return sequence_output, att_scores, pooled_output
-        prediction_scores, seq_relationship_score = self.cls(sequence_output, pooled_output)
-        # tmp = []
-        # for s_id, sequence_layer in enumerate(sequence_output):
-        #     tmp.append(self.fit_dense(sequence_layer))
-        # sequence_output = tmp
+                                                output_all_encoded_layers=True)
+    
+        prediction_scores, seq_relationship_score = self.cls(sequence_output[-1], pooled_output)
+        tmp = []
+        for s_id, sequence_layer in enumerate(sequence_output):
+            tmp.append(self.fit_dense(sequence_layer))
+        sequence_output = tmp
         if masked_lm_labels is not None and next_sentence_label is None:
             loss_fct = CrossEntropyLoss(ignore_index=-1)
             masked_lm_loss = loss_fct(prediction_scores.view(-1, self.vocab_size), masked_lm_labels.view(-1))
@@ -831,10 +837,11 @@ class TinyBertForPreTrainingWithDistillation(BertPreTrainedModel):
             masked_lm_loss = loss_fct(prediction_scores.view(-1, self.vocab_size), masked_lm_labels.view(-1))
             next_sentence_loss = loss_fct(seq_relationship_score.view(-1, 2), next_sentence_label.view(-1))
             total_loss = masked_lm_loss + next_sentence_loss
-            return total_loss, att_scores
+            return total_loss, sequence_output, att_scores
+            
         else:
             return prediction_scores, seq_relationship_score
-
+    
 class BertForPreTraining(BertPreTrainedModel):
     """BERT model with pre-training heads.
     This module comprises the BERT model followed by the two pre-training heads:
@@ -905,11 +912,17 @@ class BertForPreTraining(BertPreTrainedModel):
         self.apply(self.init_bert_weights)
         
     def forward(self, input_ids, token_type_ids=None, attention_mask=None, \
-                masked_lm_labels=None, next_sentence_label=None):
-        sequence_output, pooled_output = self.bert(input_ids, token_type_ids, attention_mask,
-                                                       output_all_encoded_layers=False)
-        prediction_scores, seq_relationship_score = self.cls(sequence_output, pooled_output)
+                masked_lm_labels=None, next_sentence_label=None, mode=None):
+        if mode != 'ALL':
+            sequence_output, att_scores, pooled_output = self.bert(input_ids, token_type_ids, attention_mask,
+                                                            output_all_encoded_layers=False)
+            prediction_scores, seq_relationship_score = self.cls(sequence_output, pooled_output)
 
+        else:
+            sequence_output, att_scores, pooled_output = self.bert(input_ids, token_type_ids, attention_mask,
+                                                           output_all_encoded_layers=True)
+            prediction_scores, seq_relationship_score = self.cls(sequence_output[-1], pooled_output)
+        
         if masked_lm_labels is not None and next_sentence_label is None:
             loss_fct = CrossEntropyLoss(ignore_index=-1)
             masked_lm_loss = loss_fct(prediction_scores.view(-1, self.vocab_size), masked_lm_labels.view(-1))
@@ -921,10 +934,14 @@ class BertForPreTraining(BertPreTrainedModel):
             masked_lm_loss = loss_fct(prediction_scores.view(-1, self.vocab_size), masked_lm_labels.view(-1))
             next_sentence_loss = loss_fct(seq_relationship_score.view(-1, 2), next_sentence_label.view(-1))
             total_loss = masked_lm_loss + next_sentence_loss
-            return total_loss
+            if mode == 'ALL':
+                return total_loss, sequence_output, att_scores    
+            if mode == 'PT':
+                return total_loss
+            return total_loss, sequence_output, att_scores
         else:
             return prediction_scores, seq_relationship_score
-        
+
         
 class BertForMaskedLM(BertPreTrainedModel):
     """BERT model with the masked language modeling head.
@@ -1238,11 +1255,11 @@ class BertForTokenClassification(BertPreTrainedModel):
         self.classifier = nn.Linear(config.hidden_size, num_labels)
         self.apply(self.init_bert_weights)
 
-    def forward(self, input_ids, token_type_ids=None, attention_mask=None, labels=None):
-        sequence_output, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
-        sequence_output = self.dropout(sequence_output)
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, labels=None, is_train=False):
+        encoded_layers, layer_atts, pooled_output = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=True)
+        sequence_output = self.dropout(encoded_layers[-1])
         logits = self.classifier(sequence_output)
-
+        if is_train: return logits, layer_atts, encoded_layers
         if labels is not None:
             loss_fct = CrossEntropyLoss()
             # Only keep active parts of the loss
@@ -1257,6 +1274,44 @@ class BertForTokenClassification(BertPreTrainedModel):
         else:
             return logits
 
+class TinyBertForTokenClassification(BertPreTrainedModel):
+    def __init__(self, config, num_labels, config_1=None):
+        super(TinyBertForTokenClassification, self).__init__(config)
+        self.num_labels = num_labels
+        self.bert = BertModel(config, config_1)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.classifier = nn.Linear(config.hidden_size, num_labels)
+        self.fit_dense = nn.Linear(config.hidden_size, 768)
+        self.apply(self.init_bert_weights)
+
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None,
+                labels=None, is_train=False):
+
+        encoded_layers, att_output, pooled_output = self.bert(input_ids, token_type_ids, attention_mask,
+                                                               output_all_encoded_layers=True)
+        sequence_output = self.dropout(encoded_layers[-1])
+        logits = self.classifier(torch.relu(sequence_output))
+
+        tmp = []
+        for s_id, sequence_layer in enumerate(encoded_layers):
+            tmp.append(self.fit_dense(sequence_layer))
+        encoded_layers = tmp
+        if is_train: return logits, att_output, encoded_layers
+
+        if labels is not None:
+            loss_fct = CrossEntropyLoss()
+            # Only keep active parts of the loss
+            # import pdb;pdb.set_trace()
+            if attention_mask is not None:
+                active_loss = attention_mask.view(-1) == 1
+                active_logits = logits.view(-1, self.num_labels)[active_loss]
+                active_labels = labels.view(-1)[active_loss]
+                loss = loss_fct(active_logits, active_labels)
+            else:
+                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+            return loss, logits
+        else:
+            return logits
 
 
 class BertForQuestionAnswering(BertPreTrainedModel):
