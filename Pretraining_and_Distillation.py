@@ -187,7 +187,7 @@ def main(rank, args):
     if args['mode'] != 'PT':
         student_model.to(device)
         if args['mode'] != 'ALL':
-            student_model = torch.nn.parallel.DistributedDataParallel(student_model, device_ids=[args['local_rank']]) # , find_unused_parameters=True
+            student_model = torch.nn.parallel.DistributedDataParallel(student_model, device_ids=[args['local_rank']], find_unused_parameters=True)
         else:
             student_model = torch.nn.parallel.DistributedDataParallel(student_model, device_ids=[args['local_rank']])
         
