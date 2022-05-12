@@ -18,6 +18,7 @@ In command line:
       -pm_p (path to state dict)
       -dp (path to your training data)
       -ls (max length of sequence)
+      -wp -1
       -do_lower
       -t_ex_only
 
@@ -37,7 +38,8 @@ In command line:
       -pm_p (path to state dict)
       -dp (path to your training data)
       -ls (max length of sequence)
-
+      -wp -1
+      
 ## 2. Distillation
 
 In command line:
@@ -55,10 +57,11 @@ In command line:
       -pm_p (path to state dict of pretrained teacher model)
       -dp (path to your training data)
       -ls (max length of sequence)
+      -wp -1
       -do_lower
 
 
-## 3. EDx2 (Pretraining + Distillation)
+## 3. EDAD (Pretraining + Distillation)
 
 In command line:
 
@@ -69,10 +72,12 @@ In command line:
       -sp (path dir to save outputs)
       -lr 1e-04 
       -str exBERT
-      -config (path to config file of original BERT)
+      -config (path to config file of original BERT) (path to config file of extension module)  
       -config_s (path to config file of TinyBERT) (path to config file of tiny extension module)  
       -vocab (path to vocab file)
       -pm_p (path to state dict of pretrained BERT)
       -dp (path to your training data)
       -ls (max length of sequence)
+      -wp -1
       -do_lower
+      -t_ex_only
