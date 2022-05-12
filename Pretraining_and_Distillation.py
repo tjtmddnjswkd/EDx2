@@ -223,19 +223,21 @@ def main(rank, args):
     num_epoc = args['epochs']
     batch_size = args['batchsize']
     longest_sentence = args['longest_sentence']
-    total_batch_num = int(np.ceil(len(train_dataset)/(np.trunc(batch_size/args['world_size'])*args['world_size']))) + 1
+    total_batch_num = int(np.ceil(len(train_dataset)/(np.trunc(batch_size/args['world_size'])*args['world_size'])))  
     if args['mode'] != 'DT':
         optimizer_grouped_parameters = [
         {'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)], 'weight_decay': 0.01},
         {'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
         ]
-        optimizer = BertAdam(optimizer_grouped_parameters, lr=lr) # warmup=args['warmup'], t_total=-1 
+        if args['warmup'] != -1: optimizer = BertAdam(optimizer_grouped_parameters, lr=lr, warmup=args['warmup'], t_total=total_batch_num*num_epoc)
+        else: optimizer = BertAdam(optimizer_grouped_parameters, lr=lr)
     if args['mode'] != 'PT':
         optimizer_grouped_parameters_student = [
         {'params': [p for n, p in param_optimizer_student if not any(nd in n for nd in no_decay)], 'weight_decay': 0.01},
         {'params': [p for n, p in param_optimizer_student if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
         ]
-        optimizer_s = BertAdam(optimizer_grouped_parameters_student, lr=lr) # warmup=args['warmup'], t_total=-1 
+        if args['warmup'] != -1: optimizer_s = BertAdam(optimizer_grouped_parameters_student, lr=lr, warmup=args['warmup'], t_total=total_batch_num*num_epoc)
+        else: optimizer_s = BertAdam(optimizer_grouped_parameters_student, lr=lr)
     all_data_num = len(train_dataset)
     train_los_table = np.zeros((num_epoc,total_batch_num))
     val_los_table = np.zeros((num_epoc,total_batch_num))
@@ -307,7 +309,7 @@ def main(rank, args):
                     
                     teacher_layer_num = len(teacher_atts)
                     student_layer_num = len(student_atts)
-                    
+                
                     assert teacher_layer_num % student_layer_num == 0
                     layers_per_block = int(teacher_layer_num / student_layer_num)
                     new_teacher_atts = [teacher_atts[i * layers_per_block + layers_per_block - 1]
