@@ -1,4 +1,4 @@
-# Efficient Domain Extension Distillation(EDx2)
+# Efficient Domain Adaptive Distillation(EDx2)
 
 ## 1. Pretraining
 
